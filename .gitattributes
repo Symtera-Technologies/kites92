@@ -1,0 +1,14 @@
+# Normalise line endings to LF in the repository and in working copies. The
+# app is developed on Windows and deployed to Linux (cPanel), and CRLF
+# reaching the server has a habit of breaking shebangs and diffs.
+* text=auto eol=lf
+
+# Leave these alone.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.avif binary
+*.woff binary
+*.woff2 binary
+*.glb binary

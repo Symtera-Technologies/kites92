@@ -1,0 +1,162 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --font-display: 'Bricolage Grotesque', system-ui, sans-serif;
+    --font-body: 'Plus Jakarta Sans', system-ui, sans-serif;
+    --nav-h: 4.5rem;
+  }
+
+  * { -webkit-tap-highlight-color: transparent; }
+
+  html {
+    /* Lenis drives scrolling; native smooth-scroll would fight it. */
+    scroll-behavior: auto;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-cream text-navy-900 font-sans antialiased;
+    overscroll-behavior-y: none;
+  }
+
+  /* Visible, on-brand focus ring for keyboard users only. */
+  :focus-visible {
+    outline: 3px solid theme('colors.royal.DEFAULT');
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  h1, h2, h3, h4 { @apply font-display font-bold text-balance; }
+  p { @apply text-pretty; }
+
+  /* Canvas is decorative scenery; never let it trap pointer or AT focus. */
+  canvas { display: block; touch-action: pan-y; }
+}
+
+@layer components {
+  .shell { @apply mx-auto w-full max-w-[86rem] px-4 sm:px-6 lg:px-10; }
+
+  /* Skip link: offscreen until focused. */
+  .skip-link {
+    @apply absolute left-4 z-[100] -translate-y-24 rounded-full bg-navy-900 px-5 py-3
+           text-sm font-semibold text-cream transition-transform focus-visible:translate-y-4;
+  }
+
+  .glass {
+    @apply border border-white/25 bg-white/10 backdrop-blur-xl;
+  }
+  /*
+   * Solid fallback where backdrop-filter is unsupported, otherwise `.glass`
+   * is near-transparent and whatever sits on it becomes unreadable.
+   *
+   * Written as plain CSS and un-nested: Tailwind v3 cannot expand `@apply`
+   * inside a nested at-rule such as `@supports`.
+   */
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .glass {
+      background-color: rgb(16 27 53 / 0.8);
+    }
+  }
+
+  .btn {
+    @apply relative inline-flex select-none items-center justify-center gap-2 rounded-full
+           px-7 py-3.5 text-sm font-semibold tracking-wide transition-all duration-300
+           disabled:pointer-events-none disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-basant-sweep text-navy-900 shadow-glow
+           hover:-translate-y-0.5 hover:shadow-lift active:translate-y-0;
+  }
+  .btn-ghost {
+    @apply btn border border-navy-900/15 bg-white/70 text-navy-900 backdrop-blur
+           hover:border-navy-900/30 hover:bg-white;
+  }
+
+  /* Price and stock numerals should never reflow as digits change. */
+  .tnum { font-variant-numeric: tabular-nums; }
+}
+
+@layer utilities {
+  .text-stroke-cream {
+    -webkit-text-stroke: 1.5px theme('colors.cream.DEFAULT');
+    paint-order: stroke fill;
+  }
+  /* Edge mask for the horizontal gallery rail. */
+  .mask-x {
+    mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+  }
+}
+
+/*
+ * Hero kite layer.
+ *
+ * The banner is a photograph, so its own kites cannot move. These are SVG
+ * kites hovering over it, which makes the sky read as alive.
+ *
+ * Each kite holds its position and only tugs around it, because that is what
+ * a kite on a line actually does — it is tethered, so it cannot migrate
+ * across the sky. The amplitudes below are deliberately small (single-digit
+ * pixels, a few degrees); anything larger stops looking like wind and starts
+ * looking like the page is sliding.
+ *
+ * Two nested animations per kite — position on the wrapper, rotation on the
+ * child — because one element can only run one transform animation. Giving
+ * them different periods means the pair never lines up the same way twice, so
+ * the motion does not read as a loop.
+ *
+ * Plain CSS keyframes rather than a WebGL layer: this is decoration, and it
+ * costs no GPU context, no bundle weight, and works everywhere.
+ */
+@keyframes kite-wander {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  25% {
+    transform: translate3d(7px, -9px, 0);
+  }
+  50% {
+    transform: translate3d(-3px, -14px, 0);
+  }
+  75% {
+    transform: translate3d(-8px, -5px, 0);
+  }
+}
+
+@keyframes kite-tilt {
+  0%,
+  100% {
+    transform: rotate(-7deg);
+  }
+  50% {
+    transform: rotate(7deg);
+  }
+}
+
+/*
+ * Reduced motion: strip decorative animation but keep the site fully usable.
+ * The 3D scenes read the same preference in JS (useQuality) and render a
+ * static frame rather than a render loop, so this rule is the CSS half of
+ * one coherent policy.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /*
+   * Hide the drifting kites outright rather than letting the rule above
+   * collapse their animation — that would snap every kite to the END of its
+   * drift (118vw) and leave them bunched offscreen, which is worse than not
+   * rendering them at all.
+   */
+  .kite-layer {
+    display: none;
+  }
+}

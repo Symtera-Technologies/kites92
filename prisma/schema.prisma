@@ -1,0 +1,356 @@
+// Kites92 commerce schema — MySQL (cPanel).
+//
+// MONEY: every monetary column is an Int of whole Pakistani Rupees. PKR has no
+// circulating sub-unit, so rupee integers are exact and avoid both float drift
+// and Decimal marshalling. Any computed fraction (percentage discounts, the 50%
+// advance) is rounded half-up to the rupee at the point of calculation — see
+// src/lib/commerce/money.ts, the only place allowed to do that rounding.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────  Catalogue  ─────────────────────────────
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+model Category {
+  id          String    @id @default(cuid())
+  slug        String    @unique
+  name        String
+  nameUrdu    String?
+  description String?   @db.Text
+  imageUrl    String?
+  /// Drives the order categories appear in the 3D gallery fly-through.
+  sortOrder   Int       @default(0)
+  isActive    Boolean   @default(true)
+  products    Product[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([isActive, sortOrder])
+}
+
+model Product {
+  id          String        @id @default(cuid())
+  slug        String        @unique
+  name        String
+  nameUrdu    String?
+  /// Short line used on cards and in the 3D hover label.
+  tagline     String?
+  description String?       @db.Text
+  status      ProductStatus @default(DRAFT)
+
+  categoryId  String?
+  category    Category?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  /// Display price in whole PKR. The authoritative price lives on the variant;
+  /// this is the "from" figure shown before a variant is chosen.
+  basePriceRs    Int
+  /// Struck-through original price, when on sale. Must exceed basePriceRs.
+  comparePriceRs Int?
+
+  isFeatured     Boolean @default(false)
+  /// True for pre-assembled Basant bundles composed of bundleItems.
+  isBundle       Boolean @default(false)
+  /// Eligible to appear as a component in the customer-built bundle builder.
+  bundleEligible Boolean @default(false)
+
+  /// Kite trade attributes, optional so accessories fit the same model.
+  /// Size in "Tawa", the local unit (0.5, 0.75, 1, 1.5 ...). Null for non-kites.
+  tawaSize Float?
+  material String?
+
+  metaTitle       String?
+  metaDescription String? @db.Text
+
+  images      ProductImage[]
+  variants    ProductVariant[]
+  reviews     Review[]
+  orderItems  OrderItem[]
+  wishlisted  WishlistItem[]
+  bundleItems BundleItem[] @relation("BundleParent")
+  partOf      BundleItem[] @relation("BundleChild")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, isFeatured])
+  @@index([categoryId, status])
+}
+
+model ProductImage {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  url       String
+  /// Required: every image needs real alt text for the SEO/a11y baseline.
+  alt       String
+  sortOrder Int     @default(0)
+
+  @@index([productId, sortOrder])
+}
+
+/// A purchasable SKU. Stock is tracked here, never on Product.
+model ProductVariant {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  sku       String  @unique
+  /// Human label, e.g. "1.5 Tawa — Multi".
+  label     String
+  colorName String?
+  /// Hex swatch shown in the picker and used to tint the 3D preview.
+  colorHex  String?
+  sizeLabel String?
+  priceRs   Int
+  stock     Int     @default(0)
+  isActive  Boolean @default(true)
+
+  orderItems OrderItem[]
+
+  @@index([productId, isActive])
+}
+
+/// Component line of a pre-assembled bundle product.
+model BundleItem {
+  id       String  @id @default(cuid())
+  bundleId String
+  bundle   Product @relation("BundleParent", fields: [bundleId], references: [id], onDelete: Cascade)
+  itemId   String
+  item     Product @relation("BundleChild", fields: [itemId], references: [id], onDelete: Cascade)
+  quantity Int     @default(1)
+
+  @@unique([bundleId, itemId])
+}
+
+// ─────────────────────────────  Customers  ─────────────────────────────
+
+enum UserRole {
+  CUSTOMER
+  ADMIN
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  /// Null for accounts created at guest checkout that were never claimed.
+  passwordHash  String?
+  name          String
+  phone         String?
+  role          UserRole  @default(CUSTOMER)
+  emailVerified DateTime?
+
+  addresses Address[]
+  orders    Order[]
+  reviews   Review[]
+  wishlist  WishlistItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Address {
+  id         String  @id @default(cuid())
+  userId     String
+  user       User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label      String?
+  fullName   String
+  phone      String
+  province   String
+  city       String
+  /// Neighbourhood / sector — how Pakistani couriers actually route.
+  area       String?
+  line1      String
+  line2      String?
+  postalCode String?
+  isDefault  Boolean @default(false)
+
+  @@index([userId])
+}
+
+model WishlistItem {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, productId])
+}
+
+// ─────────────────────────────  Orders  ─────────────────────────────
+
+enum OrderStatus {
+  PENDING_PAYMENT
+  CONFIRMED
+  PACKED
+  DISPATCHED
+  DELIVERED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  COD
+  BANK_TRANSFER
+  GATEWAY
+}
+
+enum PaymentStatus {
+  UNPAID
+  ADVANCE_PAID
+  PAID
+  REFUNDED
+}
+
+model Order {
+  id            String @id @default(cuid())
+  /// Customer-facing reference, e.g. K92-7F3K2Q.
+  orderNumber   String @unique
+  /// Unguessable token so guests can track an order without an account.
+  trackingToken String @unique
+
+  /// Null for guest checkout; the contact fields below are always captured.
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  customerName  String
+  customerPhone String
+  customerEmail String?
+
+  province   String
+  city       String
+  area       String?
+  line1      String
+  line2      String?
+  postalCode String?
+
+  items OrderItem[]
+
+  subtotalRs Int
+  discountRs Int @default(0)
+  shippingRs Int @default(0)
+  totalRs    Int
+  /// Amount actually received so far (supports the 50%-advance convention).
+  amountPaidRs Int @default(0)
+
+  couponCode String?
+  couponId   String?
+  coupon     Coupon? @relation(fields: [couponId], references: [id], onDelete: SetNull)
+
+  paymentMethod PaymentMethod
+  paymentStatus PaymentStatus @default(UNPAID)
+  status        OrderStatus   @default(PENDING_PAYMENT)
+
+  customerNote String? @db.Text
+  adminNote    String? @db.Text
+  /// Set when staff match a WhatsApp payment receipt to this order.
+  paymentConfirmedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([customerPhone])
+}
+
+/// Line item. Name and price are copied at purchase time so historical orders
+/// stay truthful after the catalogue changes or a product is removed.
+model OrderItem {
+  id      String @id @default(cuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  productId String?
+  product   Product?        @relation(fields: [productId], references: [id], onDelete: SetNull)
+  variantId String?
+  variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  productName  String
+  variantLabel String?
+  unitPriceRs  Int
+  quantity     Int
+  lineTotalRs  Int
+
+  @@index([orderId])
+}
+
+// ─────────────────────────────  Promotions  ─────────────────────────────
+
+enum DiscountType {
+  PERCENT
+  FIXED
+}
+
+model Coupon {
+  id            String       @id @default(cuid())
+  code          String       @unique
+  type          DiscountType
+  /// Percent (1-100) when type=PERCENT, else whole PKR off.
+  value         Int
+  minSubtotalRs Int?
+  /// Null means unlimited redemptions.
+  maxRedemptions Int?
+  timesRedeemed  Int      @default(0)
+  startsAt       DateTime?
+  endsAt         DateTime?
+  isActive       Boolean  @default(true)
+  orders         Order[]
+  createdAt      DateTime @default(now())
+}
+
+model Review {
+  id         String  @id @default(cuid())
+  productId  String
+  product    Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  userId     String?
+  user       User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  authorName String
+  rating     Int
+  title      String?
+  body       String  @db.Text
+  /// Reviews stay hidden until staff approve them, so only genuine reviews
+  /// are ever displayed.
+  isApproved Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@index([productId, isApproved])
+}
+
+// ───────────────────────  Shipping & site settings  ───────────────────────
+
+/// Delivery coverage. A city absent from this table is out of area, which is
+/// how configurable delivery restrictions are enforced.
+model DeliveryZone {
+  id           String  @id @default(cuid())
+  province     String
+  city         String
+  feeRs        Int     @default(0)
+  /// Order subtotal at or above which delivery is free. Null disables that.
+  freeOverRs   Int?
+  codAvailable Boolean @default(true)
+  estimateDays String?
+  isActive     Boolean @default(true)
+
+  @@unique([province, city])
+  @@index([isActive])
+}
+
+/// Editable singleton values: WhatsApp number, bank details, the Basant sales
+/// gate notice, homepage copy. Keeps policy claims out of the source code.
+model Setting {
+  key       String   @id
+  value     String   @db.Text
+  updatedAt DateTime @updatedAt
+}

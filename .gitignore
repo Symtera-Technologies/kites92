@@ -1,0 +1,19 @@
+node_modules/
+.next/
+out/
+build/
+.env
+.env.local
+.env*.local
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+/prisma/dev.db
+next-env.d.ts
+tsconfig.tsbuildinfo
+.vercel
+.turbo
+# Uploaded product photographs. Kept out of public/ on purpose: see
+# src/lib/media.ts and DEPLOYMENT.md section 7.
+/uploads/
