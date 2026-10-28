@@ -26,7 +26,7 @@ MySQL.
 
 ```bash
 npm install
-cp .env.example .env          # then fill in DATABASE_URL and AUTH_SECRET
+cp .env.example .env          # then fill in the DB_* values and AUTH_SECRET
 npm run db:push               # create the tables
 npm run db:seed               # sample catalogue + admin user
 npm run dev
@@ -43,8 +43,35 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 ### You need a MySQL database
 
 There is no local database in this repo. Either install MySQL/MariaDB locally,
-or point `DATABASE_URL` at your cPanel database and enable **Remote MySQL** for
-your IP while developing.
+or point `DB_HOST` at your cPanel database and enable **Remote MySQL** for your
+IP while developing.
+
+The connection string is built from `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`,
+`DB_PASSWORD` and `DB_CONNECTION_LIMIT` by `src/lib/db-url.mjs`, which
+percent-encodes the credentials for you — paste the password exactly as your
+host gave it, punctuation and all. Setting `DATABASE_URL` directly still works
+and overrides all of them, for hosts that hand you one opaque URL.
+
+Names other platforms set themselves — `MYSQLHOST`, `MYSQL_DATABASE`,
+`MYSQLUSER`, `MYSQLPASSWORD`, `MYSQL_UNIX_PORT` and friends — are read as
+fallbacks, so a managed MySQL add-on works without renaming anything. `DB_*`
+wins where both are present, and `npm run diagnose:db` reports which variable
+each part came from.
+
+`DATABASE_URL` is not needed to run the app. `src/lib/db.ts` and
+`prisma/seed.mjs` pass the composed URL to `PrismaClient` directly, so nothing
+at runtime reads it. The Prisma *CLI* is different: it reads
+`env("DATABASE_URL")` out of `schema.prisma` and refuses to run without it,
+because a Prisma datasource accepts exactly one environment variable and cannot
+assemble one from parts. So `npm run db:push`, `db:seed`, `db:studio` and the
+`prisma generate` inside `npm run build` go through
+`scripts/with-database-url.mjs`, which composes the value and injects it. Call
+`prisma` by hand and it will say the variable is missing; use the npm scripts.
+
+When the database is unreachable or unconfigured, `npm run diagnose:db` reports
+what this process can see — which variables are set, whether the host resolves,
+whether TCP connects, which MySQL sockets exist — and names the fix. On a host
+with no shell it can be run from cPanel's Setup Node.js App → Run JS script.
 
 `prisma/schema.sql` is a ready-made dump of the full schema (14 tables,
 `utf8mb4` so Urdu works) if you would rather create the tables with

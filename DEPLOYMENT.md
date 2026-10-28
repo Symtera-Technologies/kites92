@@ -34,17 +34,39 @@ cPanel → **MySQL Databases**
 cPanel prefixes both names with your account name. The real names will look
 like `youracct_kites92_shop` and `youracct_kites92_app` — use those.
 
-Your connection string:
+Your connection settings — five separate variables, not a URL:
 
+```ini
+DB_HOST="localhost"
+DB_PORT="3306"
+DB_NAME="youracct_kites92_shop"
+DB_USER="youracct_kites92_app"
+DB_PASSWORD="paste it exactly as cPanel gave it"
+DB_CONNECTION_LIMIT="5"
 ```
-DATABASE_URL="mysql://youracct_kites92_app:PASSWORD@localhost:3306/youracct_kites92_shop?connection_limit=5"
-```
 
-**Keep `connection_limit=5`.** Shared hosts cap concurrent MySQL connections
-hard, and Prisma's default pool will exhaust it and start throwing
-`Too many connections` under even light traffic.
+**Paste the password verbatim** — no percent-encoding, no escaping, no quoting.
+`src/lib/db-url.mjs` assembles the connection URL and encodes the credentials
+as it does so.
 
-If your password contains `@`, `:`, `/` or `#`, percent-encode it.
+This is why the parts are separate. cPanel's password generator emits URI
+punctuation freely, and in a hand-written connection string `/`, `#` and `?`
+end the authority component: the URL either fails to parse or quietly starts
+pointing at a different host. `%` is worse, because it parses cleanly — the
+password is percent-decoded on its way to the server, so `%cd` is read as an
+escape sequence and the credential that arrives is not the one you typed. Each
+of these surfaces at the end of a deploy as an authentication failure or a
+connection timeout that names the wrong thing.
+
+**Keep `DB_CONNECTION_LIMIT` at 5** unless you are on a dedicated server.
+Shared hosts cap concurrent MySQL connections hard, and Prisma's default pool
+will exhaust the allowance and start throwing `Too many connections` under even
+light traffic.
+
+If your host gave you a ready-made connection string instead of a username and
+password — PlanetScale, Railway, anything behind a connection proxy — set
+`DATABASE_URL` to it and leave the `DB_*` variables unset. It overrides them
+and is passed through untouched, query parameters and all.
 
 ---
 
@@ -133,7 +155,12 @@ Set these in cPanel → Setup Node.js App → **Environment variables** (preferr
 they survive restarts and stay out of the filesystem), or in `~/kites92/.env`.
 
 ```ini
-DATABASE_URL="mysql://youracct_user:PASSWORD@localhost:3306/youracct_db?connection_limit=5"
+DB_HOST="localhost"
+DB_PORT="3306"
+DB_NAME="youracct_db"
+DB_USER="youracct_user"
+DB_PASSWORD="PASSWORD"
+DB_CONNECTION_LIMIT="5"
 NEXT_PUBLIC_SITE_URL="https://kites92.com"
 NEXT_PUBLIC_SITE_NAME="Kites92"
 AUTH_SECRET="<32 random bytes, base64url>"
@@ -146,6 +173,18 @@ NEXT_IMAGE_UNOPTIMIZED="0"
 SEED_ADMIN_EMAIL="owner@kites92.com"
 SEED_ADMIN_PASSWORD="<a strong password you will change>"
 ```
+
+You do not have to use these exact names. If your platform injects its own
+database variables, they are read as fallbacks — `MYSQLHOST`, `MYSQL_HOST`,
+`DATABASE_HOST`, `MYSQLDATABASE`, `MYSQL_DATABASE`, `MYSQLUSER`, `MYSQL_USER`,
+`MYSQLPASSWORD`, `MYSQL_PASSWORD`, `MYSQLPORT`, `MYSQL_PORT`,
+`MYSQL_UNIX_PORT`, and `MYSQL_URL` or `DB_URL` for a complete connection
+string. The `DB_*` names win where both are set, and
+`npm run diagnose:db` prints which name each part came from.
+
+`DATABASE_URL` itself is **not** required to run the app: the application
+composes the connection string and hands it to Prisma directly. It is needed
+only by the Prisma CLI, and `scripts/with-database-url.mjs` supplies it there.
 
 Generate the secret:
 
@@ -175,6 +214,33 @@ the complete schema and is generated offline, so it needs no database to
 produce. You will then need to create your admin user manually — easiest is to
 run the seed once from any machine that can reach the database with Remote
 MySQL enabled.
+
+---
+
+## 5a. If the app cannot reach the database
+
+Run **Setup Node.js App → Run JS script → `diagnose:db`**. It reports, from
+inside the app's own process, which variables are set (never their values),
+whether the host name resolves, whether a TCP connection can be opened, which
+MySQL sockets exist on the machine, and what Prisma itself says — then names the
+fix.
+
+The case it exists for: on a shared Linux host, phpMyAdmin and the `mysql` CLI
+reach `localhost` over a **unix socket**, while the app opens a **TCP**
+connection. The database can therefore be perfectly healthy in cPanel and
+unreachable from the app, reporting
+`Can't reach database server at localhost:3306`. When that is what is happening,
+set `DB_SOCKET` to the path the diagnostic found — usually
+`/var/lib/mysql/mysql.sock` — and **Restart** the app.
+
+Worth checking first, since it needs nothing deployed: in phpMyAdmin → **SQL**,
+
+```sql
+SHOW VARIABLES WHERE Variable_name
+  IN ('skip_networking','bind_address','port','socket','hostname');
+```
+
+`skip_networking = ON` means TCP is switched off and `DB_SOCKET` is required.
 
 ---
 
@@ -264,8 +330,9 @@ Options, best first:
 | Symptom | Cause |
 | --- | --- |
 | Unstyled page, no JS | `.next/static` was not copied — see §3 |
-| 500 on every page | `DATABASE_URL` wrong, or tables not created |
-| `Too many connections` | `connection_limit=5` missing from `DATABASE_URL` |
+| 500 on every page | Database credentials wrong, or tables not created |
+| `Can't reach database server` | MySQL is on a socket, not TCP — run `npm run diagnose:db`, then set `DB_SOCKET` |
+| `Too many connections` | `DB_CONNECTION_LIMIT` unset or too high |
 | Login does nothing | No HTTPS (the `secure` cookie is dropped), or `AUTH_SECRET` unset |
 | Images 404 | `sharp` missing — set `NEXT_IMAGE_UNOPTIMIZED=1` |
 | Blank page, 503 | App crashed on boot; read the log in Setup Node.js App |

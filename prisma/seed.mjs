@@ -27,7 +27,14 @@
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
-const db = new PrismaClient();
+import { buildDatabaseUrl } from '../src/lib/db-url.mjs';
+import { loadDotEnv } from '../scripts/load-dotenv.mjs';
+
+loadDotEnv();
+
+// Composed from DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD, so a password
+// containing URI punctuation needs no hand-escaping. DATABASE_URL still wins.
+const db = new PrismaClient({ datasourceUrl: buildDatabaseUrl() });
 
 /* ── Categories ─────────────────────────────────────────────────────────── */
 
